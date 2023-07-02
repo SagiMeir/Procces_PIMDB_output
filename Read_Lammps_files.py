@@ -11,12 +11,15 @@ PLEASE MAKE SURE YOU HAVE INSTALLED: MDAnalysis & tqdm.
 import numpy as np
 import pandas as pd
 import MDAnalysis as mda
+from MDAnalysis.analysis import rdf
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 # from tqdm.notebook import trange, tqdm
 # from numba import njit
 from functools import reduce
 import glob
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)  # Ignore the UserWarning
 
 class Analyze_LAMMPS:
     
@@ -200,7 +203,7 @@ class Analyze_LAMMPS:
             ax.set_ylabel(r'$\rho$(r)', labelpad=10)
         
     
-    def RDF( self, skip_frac=0.2, r_min=0, bins=100, output_name='rdf.csv', plot=False ):
+    def RDF( self, skip_frac=0.2, r_min=0, r_max=400, bins=100, output_name='rdf.csv', plot=False ):
         """
         GENERATES A CSV FILE OF THE PAIR CORRELATION. ALSO RETURNS NORMELIZED DISTRIBUTION IN
         2D AND 3D SYSTEMS (CHOOSE THE RELEVANT FOR YOU). BTW, NORMELIZED MEANS THAT: \int \g(r) d\omega dr = 1 .
@@ -233,24 +236,24 @@ class Analyze_LAMMPS:
         xyz_class = mda.coordinates.XYZ.XYZReader(file_names[0])
         steps = xyz_class.n_frames
         self.steps = steps
+        drop=int(skip_frac*self.steps)
         particles = xyz_class.n_atoms
         beads = self.beads
         if ( beads!=len(file_names) ):
             print('error - number of xyz files does not equal to number of beads')
         
-        Rij=np.zeros([particles,3,steps,beads])
-        
+        counts,Rij_range = 0,0
         for ibead in tqdm(range(beads)):
-            xyz_class = mda.coordinates.XYZ.XYZReader(file_names[ibead])
-            for ts in xyz_class:
-                arr=ts.positions
-                Rij[:,:,ts.frame,ibead] = ( ( (arr[:,:,np.newaxis]-arr[:,np.newaxis,:])**2 ).sum(1) )**0.5
-        
-        drop=int(skip_frac*self.steps)
-        Rij = Rij.copy()[:,:,drop:,:]
-        
-        counts,Rij_range=np.histogram(Rij[Rij>r_min],bins)
-        Rij_range=(Rij_range[1:]+Rij_range[:-1])*0.5
+            try:
+                u= mda.Universe(file_names[ibead])
+                atoms = u.select_atoms('all')
+                irdf = rdf.InterRDF(atoms, atoms,exclusion_block=(1, 1),nbins=bins,range=(r_min,r_max),norm=None)
+                irdf.run()
+            except UserWarning:
+                pass
+            counts+=irdf.results.rdf
+            Rij_range+=irdf.results.bins/beads
+            
         
         counts_Area = np.trapz(counts, Rij_range)
         norm_2D_counts = counts/Rij_range/counts_Area/(2*np.pi)
