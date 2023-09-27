@@ -10,6 +10,7 @@ PLEASE MAKE SURE YOU HAVE INSTALLED: MDAnalysis & tqdm.
 
 import numpy as np
 import pandas as pd
+# import dask.array as da
 import MDAnalysis as mda
 from MDAnalysis.analysis import rdf
 import matplotlib.pyplot as plt
@@ -20,6 +21,8 @@ from functools import reduce
 import glob
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)  # Ignore the UserWarning
+from copy import deepcopy
+
 
 class Analyze_LAMMPS:
     
@@ -270,6 +273,67 @@ class Analyze_LAMMPS:
             ax.set_ylabel(r'g(r)', labelpad=10)
         
         
+    def ImCorrelation(self, skip_frac=0.2, beta=1, hbar=1, mass=1, dim=3, output_name='G.csv',pbc=None):
+        '''
+        GENERATES A CSV FILE OF IMAGINARY TIME CORRELATION FUNCTION
+        '''
         
         
-    
+        file_names = [i for i in glob.glob(self.filesPath+'/*.{}'.format('xyz'))]
+        # to rearrange files according to bead number
+        file_names = sorted(file_names, key=lambda x: int(x.split('_')[1].split('.')[0]))
+        xyz_class = mda.coordinates.XYZ.XYZReader(file_names[0])
+        steps = xyz_class.n_frames
+        self.steps = steps
+        particles = xyz_class.n_atoms
+        beads = self.beads
+        drop=int(skip_frac*self.steps)
+        if ( beads!=len(file_names) ):
+            print('error - number of xyz files does not equal to number of beads')
+
+        tau_k = np.linspace(0,beta,beads+1)
+        G = np.zeros([beads+1]) #G = da.zeros([beads+1])
+        R_0 = np.zeros([particles,dim,steps]) #R_0 = da.zeros([particles,3,steps])
+        R_1 = np.zeros([particles,dim,steps]) #R_1 = da.zeros([particles,3,steps])
+        
+        xyz_class2 = mda.coordinates.XYZ.XYZReader(file_names[1])
+        for ts,ts2 in zip(xyz_class,xyz_class2):
+            #arr1 = da.from_array(ts.positions)
+            #arr2 = da.from_array(ts2.positions)
+            R_0[:,:,ts.frame] = ts.positions
+            R_1[:,:,ts.frame] = ts2.positions
+        R_0_1 = deepcopy(R_1)[:,:,drop:] - deepcopy(R_0)[:,:,drop:]
+        if pbc is not None:
+            R_0_1[R_0_1>=pbc/2] -= pbc
+            R_0_1[R_0_1<-pbc/2] += pbc
+
+        G[0] = beads*dim/(mass*beta) - (beads*beads/(hbar*beta)**2) * ( (R_0_1*R_0_1).mean() ) * dim #/(steps-drop)/particles
+        # G[0] =  - (beads*beads/(hbar*beta)**2) * ( (R_0_1*R_0_1).sum() )/(steps-drop)/particles
+        
+        R_k = deepcopy(R_1)
+        for ibead in tqdm(range(2,beads)):
+            R_k1 = np.zeros([particles,dim,steps])
+            xyz_class = mda.coordinates.XYZ.XYZReader(file_names[ibead])
+            for ts in xyz_class:
+                #arr=da.from_array(ts.positions)
+                R_k1[:,:,ts.frame] = ts.positions
+            R_k_k1 = deepcopy(R_k1)[:,:,drop:] - deepcopy(R_k)[:,:,drop:]
+            if pbc is not None:
+                R_k_k1[R_k_k1>=pbc/2] -= pbc
+                R_k_k1[R_k_k1<-pbc/2] += pbc
+            G[ibead-1] = - (beads*beads/(hbar*beta)**2) * ( (R_k_k1*R_0_1).mean() ) * dim #/(steps-drop)/particles
+            R_k = deepcopy(R_k1)
+        R_k_k1 = deepcopy(R_0)[:,:,drop:] - deepcopy(R_k)[:,:,drop:]
+        if pbc is not None:
+            R_k_k1[R_k_k1>=pbc/2] -= pbc
+            R_k_k1[R_k_k1<-pbc/2] += pbc
+
+        G[ibead] = - (beads*beads/(hbar*beta)**2) * ( (R_k_k1*R_0_1).mean() ) * dim #/(steps-drop)/particles
+        G[ibead+1] = G[0]
+
+        #G = G.compute()
+
+        dict = {'tau' : tau_k, 'G' : G}
+        df = pd.DataFrame(dict)
+        df.to_csv(output_name,index=False)
+        
