@@ -293,8 +293,8 @@ class Analyze_LAMMPS:
 
         tau_k = np.linspace(0,beta,beads+1)
         G = np.zeros([beads+1]) #G = da.zeros([beads+1])
-        R_0 = np.zeros([particles,dim,steps]) #R_0 = da.zeros([particles,3,steps])
-        R_1 = np.zeros([particles,dim,steps]) #R_1 = da.zeros([particles,3,steps])
+        R_0 = np.zeros([particles,3,steps]) #R_0 = da.zeros([particles,3,steps])
+        R_1 = np.zeros([particles,3,steps]) #R_1 = da.zeros([particles,3,steps])
         
         xyz_class2 = mda.coordinates.XYZ.XYZReader(file_names[1])
         for ts,ts2 in zip(xyz_class,xyz_class2):
@@ -307,12 +307,12 @@ class Analyze_LAMMPS:
             R_0_1[R_0_1>=pbc/2] -= pbc
             R_0_1[R_0_1<-pbc/2] += pbc
 
-        G[0] = beads*dim/(mass*beta) - (beads*beads/(hbar*beta)**2) * ( (R_0_1*R_0_1).mean() ) * dim #/(steps-drop)/particles
+        G[0] = beads*dim/(mass*beta) - (beads*beads/(hbar*beta)**2) * ( (R_0_1*R_0_1).sum() ) /(steps-drop)/particles
         # G[0] =  - (beads*beads/(hbar*beta)**2) * ( (R_0_1*R_0_1).sum() )/(steps-drop)/particles
         
         R_k = deepcopy(R_1)
         for ibead in tqdm(range(2,beads)):
-            R_k1 = np.zeros([particles,dim,steps])
+            R_k1 = np.zeros([particles,3,steps])
             xyz_class = mda.coordinates.XYZ.XYZReader(file_names[ibead])
             for ts in xyz_class:
                 #arr=da.from_array(ts.positions)
@@ -321,14 +321,14 @@ class Analyze_LAMMPS:
             if pbc is not None:
                 R_k_k1[R_k_k1>=pbc/2] -= pbc
                 R_k_k1[R_k_k1<-pbc/2] += pbc
-            G[ibead-1] = - (beads*beads/(hbar*beta)**2) * ( (R_k_k1*R_0_1).mean() ) * dim #/(steps-drop)/particles
+            G[ibead-1] = - (beads*beads/(hbar*beta)**2) * ( (R_k_k1*R_0_1).sum() ) /(steps-drop)/particles
             R_k = deepcopy(R_k1)
         R_k_k1 = deepcopy(R_0)[:,:,drop:] - deepcopy(R_k)[:,:,drop:]
         if pbc is not None:
             R_k_k1[R_k_k1>=pbc/2] -= pbc
             R_k_k1[R_k_k1<-pbc/2] += pbc
 
-        G[ibead] = - (beads*beads/(hbar*beta)**2) * ( (R_k_k1*R_0_1).mean() ) * dim #/(steps-drop)/particles
+        G[ibead] = - (beads*beads/(hbar*beta)**2) * ( (R_k_k1*R_0_1).sum() ) /(steps-drop)/particles
         G[ibead+1] = G[0]
 
         #G = G.compute()
