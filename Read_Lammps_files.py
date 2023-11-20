@@ -206,14 +206,18 @@ class Analyze_LAMMPS:
             ax.set_ylabel(r'$\rho$(r)', labelpad=10)
         
     
-    def RDF( self, skip_frac=0.2, r_min=0, r_max=400, bins=100, output_name='rdf.csv', plot=False ):
+    def RDF( self, atom_A='all', atom_B='all',skip_frac=0.2, r_min=0, r_max=400, bins=100, output_name='rdf.csv', plot=False ):
         """
         GENERATES A CSV FILE OF THE PAIR CORRELATION. ALSO RETURNS NORMELIZED DISTRIBUTION IN
         2D AND 3D SYSTEMS (CHOOSE THE RELEVANT FOR YOU). BTW, NORMELIZED MEANS THAT: \int \g(r) d\omega dr = 1 .
 
         Parameters
         ----------
-        skip_frac : fraction between 0 to 1, optional
+        atom_A/B : string, optional
+            IN CASE THAT THERE ARE DIFFERENT KINDS OF ATOMS.
+            FOR EXAMPLE: RDF OF WATER BETWEEN ATOM O AND H: atom_A = 'type O', atom_B = 'type H'
+
+        skip_frac : (currently not implemented) fraction between 0 to 1, optional
             FRACTION OF DATA TO DROP AT THE BEGINING. The default is 0.2.
             
         r_min : non-negative float, optional
@@ -249,8 +253,10 @@ class Analyze_LAMMPS:
         for ibead in tqdm(range(beads)):
             try:
                 u= mda.Universe(file_names[ibead])
-                atoms = u.select_atoms('all')
-                irdf = rdf.InterRDF(atoms, atoms,exclusion_block=(1, 1),nbins=bins,range=(r_min,r_max),norm=None)
+                # atoms = u.select_atoms('all')
+                A = u.select_atoms(atom_A)
+                B = u.select_atoms(atom_B)
+                irdf = rdf.InterRDF(A, B,exclusion_block=(1, 1),nbins=bins,range=(r_min,r_max),norm=None)
                 irdf.run()
             except UserWarning:
                 pass
@@ -308,6 +314,74 @@ class Analyze_LAMMPS:
             R_0_1[R_0_1<-pbc/2] += pbc
 
         G[0] = beads*dim/(mass*beta) - (beads*beads/(hbar*beta)**2) * ( (R_0_1*R_0_1).sum() ) /(steps-drop)/particles
+        # G[0] =  - (beads*beads/(hbar*beta)**2) * ( (R_0_1*R_0_1).sum() )/(steps-drop)/particles
+        
+        R_k = deepcopy(R_1)
+        for ibead in tqdm(range(2,beads)):
+            R_k1 = np.zeros([particles,3,steps])
+            xyz_class = mda.coordinates.XYZ.XYZReader(file_names[ibead])
+            for ts in xyz_class:
+                #arr=da.from_array(ts.positions)
+                R_k1[:,:,ts.frame] = ts.positions
+            R_k_k1 = deepcopy(R_k1)[:,:,drop:] - deepcopy(R_k)[:,:,drop:]
+            if pbc is not None:
+                R_k_k1[R_k_k1>=pbc/2] -= pbc
+                R_k_k1[R_k_k1<-pbc/2] += pbc
+            G[ibead-1] = - (beads*beads/(hbar*beta)**2) * ( (R_k_k1*R_0_1).sum() ) /(steps-drop)/particles
+            R_k = deepcopy(R_k1)
+        R_k_k1 = deepcopy(R_0)[:,:,drop:] - deepcopy(R_k)[:,:,drop:]
+        if pbc is not None:
+            R_k_k1[R_k_k1>=pbc/2] -= pbc
+            R_k_k1[R_k_k1<-pbc/2] += pbc
+
+        G[ibead] = - (beads*beads/(hbar*beta)**2) * ( (R_k_k1*R_0_1).sum() ) /(steps-drop)/particles
+        G[ibead+1] = G[0]
+
+        #G = G.compute()
+
+        dict = {'tau' : tau_k, 'G' : G}
+        df = pd.DataFrame(dict)
+        df.to_csv(output_name,index=False)
+
+    def ImCorrelation_molecule(self, skip_frac=0.2, beta=1, hbar=1, use_kg_mass_units=True, dim=3, output_name='G.csv',pbc=None):
+        '''
+        Currently incorrect - Not for use
+        GENERATES A CSV FILE OF IMAGINARY TIME CORRELATION FUNCTION FOR MOLECULES
+        '''
+        
+        
+        file_names = [i for i in glob.glob(self.filesPath+'/*.{}'.format('xyz'))]
+        # to rearrange files according to bead number
+        file_names = sorted(file_names, key=lambda x: int(x.split('_')[1].split('.')[0]))
+        xyz_class = mda.coordinates.XYZ.XYZReader(file_names[0])
+        steps = xyz_class.n_frames
+        self.steps = steps
+        particles = xyz_class.n_atoms
+        beads = self.beads
+        drop=int(skip_frac*self.steps)
+        if ( beads!=len(file_names) ):
+            print('error - number of xyz files does not equal to number of beads')
+        
+        u = mda.Universe(file_names[0])
+        masses = u.atoms.masses
+
+        tau_k = np.linspace(0,beta,beads+1)
+        G = np.zeros([beads+1]) #G = da.zeros([beads+1])
+        R_0 = np.zeros([particles,3,steps]) #R_0 = da.zeros([particles,3,steps])
+        R_1 = np.zeros([particles,3,steps]) #R_1 = da.zeros([particles,3,steps])
+        
+        xyz_class2 = mda.coordinates.XYZ.XYZReader(file_names[1])
+        for ts,ts2 in zip(xyz_class,xyz_class2):
+            #arr1 = da.from_array(ts.positions)
+            #arr2 = da.from_array(ts2.positions)
+            R_0[:,:,ts.frame] = ts.positions
+            R_1[:,:,ts.frame] = ts2.positions
+        R_0_1 = deepcopy(R_1)[:,:,drop:] - deepcopy(R_0)[:,:,drop:]
+        if pbc is not None:
+            R_0_1[R_0_1>=pbc/2] -= pbc
+            R_0_1[R_0_1<-pbc/2] += pbc
+
+        G[0] = beads*dim/(masses*beta) - (beads*beads/(hbar*beta)**2) * ( (R_0_1*R_0_1).sum() ) /(steps-drop)/particles
         # G[0] =  - (beads*beads/(hbar*beta)**2) * ( (R_0_1*R_0_1).sum() )/(steps-drop)/particles
         
         R_k = deepcopy(R_1)
