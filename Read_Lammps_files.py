@@ -345,7 +345,6 @@ class Analyze_LAMMPS:
 
     def ImCorrelation_molecule(self, skip_frac=0.2, beta=1, hbar=1, use_kg_mass_units=True, dim=3, output_name='G.csv',pbc=None):
         '''
-        Currently incorrect - Not for use
         GENERATES A CSV FILE OF IMAGINARY TIME CORRELATION FUNCTION FOR MOLECULES
         '''
         
@@ -362,18 +361,19 @@ class Analyze_LAMMPS:
         if ( beads!=len(file_names) ):
             print('error - number of xyz files does not equal to number of beads')
         
+        # The mass vector of the atoms
         u = mda.Universe(file_names[0])
-        masses = u.atoms.masses
+        masses = u.atoms.masses # the units are gram/mol
+        if use_kg_mass_units:
+            masses /= (1000 * 6.02214076 * 1E+23) # now in kg
 
         tau_k = np.linspace(0,beta,beads+1)
-        G = np.zeros([beads+1]) #G = da.zeros([beads+1])
-        R_0 = np.zeros([particles,3,steps]) #R_0 = da.zeros([particles,3,steps])
-        R_1 = np.zeros([particles,3,steps]) #R_1 = da.zeros([particles,3,steps])
+        G = np.zeros([beads+1])
+        R_0 = np.zeros([particles,3,steps]) 
+        R_1 = np.zeros([particles,3,steps]) 
         
         xyz_class2 = mda.coordinates.XYZ.XYZReader(file_names[1])
         for ts,ts2 in zip(xyz_class,xyz_class2):
-            #arr1 = da.from_array(ts.positions)
-            #arr2 = da.from_array(ts2.positions)
             R_0[:,:,ts.frame] = ts.positions
             R_1[:,:,ts.frame] = ts2.positions
         R_0_1 = deepcopy(R_1)[:,:,drop:] - deepcopy(R_0)[:,:,drop:]
@@ -381,15 +381,13 @@ class Analyze_LAMMPS:
             R_0_1[R_0_1>=pbc/2] -= pbc
             R_0_1[R_0_1<-pbc/2] += pbc
 
-        G[0] = beads*dim/(masses*beta) - (beads*beads/(hbar*beta)**2) * ( (R_0_1*R_0_1).sum() ) /(steps-drop)/particles
-        # G[0] =  - (beads*beads/(hbar*beta)**2) * ( (R_0_1*R_0_1).sum() )/(steps-drop)/particles
+        G[0] =( beads*dim/(masses*beta) ).mean() - (beads*beads/(hbar*beta)**2) * ( (R_0_1*R_0_1).sum() ) /(steps-drop)/particles
         
         R_k = deepcopy(R_1)
         for ibead in tqdm(range(2,beads)):
             R_k1 = np.zeros([particles,3,steps])
             xyz_class = mda.coordinates.XYZ.XYZReader(file_names[ibead])
             for ts in xyz_class:
-                #arr=da.from_array(ts.positions)
                 R_k1[:,:,ts.frame] = ts.positions
             R_k_k1 = deepcopy(R_k1)[:,:,drop:] - deepcopy(R_k)[:,:,drop:]
             if pbc is not None:
@@ -404,8 +402,6 @@ class Analyze_LAMMPS:
 
         G[ibead] = - (beads*beads/(hbar*beta)**2) * ( (R_k_k1*R_0_1).sum() ) /(steps-drop)/particles
         G[ibead+1] = G[0]
-
-        #G = G.compute()
 
         dict = {'tau' : tau_k, 'G' : G}
         df = pd.DataFrame(dict)
