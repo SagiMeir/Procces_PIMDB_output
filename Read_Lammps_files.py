@@ -343,6 +343,66 @@ class Analyze_LAMMPS:
         df = pd.DataFrame(dict)
         df.to_csv(output_name,index=False)
 
+
+    def ImCorrelation_symmetric(self, skip_frac=0.2, beta=1, hbar=1, mass=1, dim=3, output_name='G.csv',pbc=None):
+        '''
+        GENERATES A CSV FILE OF IMAGINARY TIME CORRELATION FUNCTION ACCORDING TO THE SYMMETRIC EXPRESSION
+        LESS NOISY
+        '''
+        
+        file_names = [i for i in glob.glob(self.filesPath+'/*.{}'.format('xyz'))]
+        # to rearrange files according to bead number
+        file_names = sorted(file_names, key=lambda x: int(x.split('_')[1].split('.')[0]))
+        xyz_class = mda.coordinates.XYZ.XYZReader(file_names[0])
+        steps = xyz_class.n_frames
+        self.steps = steps
+        particles = xyz_class.n_atoms
+        beads = self.beads
+        drop=int(skip_frac*self.steps)
+        if ( beads!=len(file_names) ):
+            print('error - number of xyz files does not equal to number of beads')
+
+        tau_k = np.linspace(0,beta,beads+1)
+        G = np.zeros([beads+1]) 
+        R_0 = np.zeros([particles,3,steps])
+        
+        for ts in xyz_class:
+            R_0[:,:,ts.frame] = ts.positions
+        R_k1_ibead = deepcopy(R_0)
+
+        for ibead in tqdm(range(beads)):
+            addition = 0 # just a dummy variable
+            R_k1 = deepcopy(R_0)
+            xyz_class = mda.coordinates.XYZ.XYZReader(file_names[ibead])
+            for ts in xyz_class:
+                R_k1_ibead[:,:,ts.frame] = ts.positions
+            
+            for k in range(beads):
+                R_k = deepcopy(R_k1)
+                R_k_ibead = deepcopy(R_k1_ibead)
+                xyz_class1 = mda.coordinates.XYZ.XYZReader(file_names[(k+1)%beads])
+                xyz_class2 = mda.coordinates.XYZ.XYZReader(file_names[(k+1+ibead)%beads])
+                for ts1,ts2 in zip(xyz_class1,xyz_class2):
+                    R_k1[:,:,ts1.frame] = ts1.positions
+                    R_k1_ibead[:,:,ts2.frame] = ts2.positions
+                R_k_k1 = deepcopy(R_k1)[:,:,drop:] - deepcopy(R_k)[:,:,drop:]
+                R_k_ibead_k1_ibead = deepcopy(R_k1_ibead)[:,:,drop:] - deepcopy(R_k_ibead)[:,:,drop:]
+                if pbc is not None:
+                    R_k_k1[R_k_k1>=pbc/2] -= pbc
+                    R_k_k1[R_k_k1<-pbc/2] += pbc
+                    R_k_ibead_k1_ibead[R_k_ibead_k1_ibead>=pbc/2] -= pbc
+                    R_k_ibead_k1_ibead[R_k_ibead_k1_ibead<-pbc/2] += pbc
+                addition+= (R_k_k1*R_k_ibead_k1_ibead).sum()/(steps-drop)/particles
+            G[ibead] = int(0==ibead)*beads*dim/(mass*beta) - addition * beads/(hbar*beta)**2
+
+        G[ibead+1] = G[0]
+
+
+        dict = {'tau' : tau_k, 'G' : G}
+        df = pd.DataFrame(dict)
+        df.to_csv(output_name,index=False)
+
+
     def ImCorrelation_molecule(self, skip_frac=0.2, beta=1, hbar=1, use_kg_mass_units=True, dim=3, output_name='G.csv',pbc=None):
         '''
         GENERATES A CSV FILE OF IMAGINARY TIME CORRELATION FUNCTION FOR MOLECULES
